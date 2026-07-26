@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "gva_live": {
+      "$sessionId": {
+        ".read": true,
+        ".write": true,
+        "frame": { ".validate": "newData.hasChildren(['data'])" },
+        "phone": { ".validate": "newData.hasChildren(['connected'])" }
+      }
+    }
+  }
+}
