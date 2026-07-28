@@ -792,11 +792,13 @@ h1,h2,h3,h4{font-family:var(--display);font-weight:600;letter-spacing:-.02em;lin
 
 <!-- ══ API KEY MODAL ══ -->
 <div class="modal" id="m-key"><div class="modal-box">
-  <div class="modal-h"><h3>Connect Google Gemini</h3><p>Grade Vision uses Google's free Gemini API. Your key stays in your browser and is sent only to Google.</p></div>
+  <div class="modal-h"><h3>Connect an AI grading provider</h3><p>Grade Vision reads scripts with Google Gemini by default. Add a Groq key too, and it'll automatically switch to Groq if Gemini is unavailable. Keys stay in your browser and are sent only to that provider.</p></div>
   <div class="modal-b">
-    <div class="field"><label>Gemini API key</label><input class="input" id="keyinput" type="password" placeholder="AIza…"></div>
-    <div style="font-size:13px;color:var(--ink-3);line-height:1.6;margin-bottom:16px">No key yet? Get one free at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--iris);font-weight:600">aistudio.google.com/apikey</a> — about 30 seconds.</div>
-    <div style="display:flex;gap:9px;justify-content:flex-end"><button class="btn btn-light" onclick="closeModal('m-key')">Cancel</button><button class="btn btn-primary" onclick="saveKey()">Save key</button></div>
+    <div class="field"><label>Gemini API key <span style="color:var(--ink-3);font-weight:400">(primary)</span></label><input class="input" id="keyinput" type="password" placeholder="AIza…"></div>
+    <div style="font-size:12.5px;color:var(--ink-3);line-height:1.6;margin-bottom:16px">No key yet? Get one free at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--iris);font-weight:600">aistudio.google.com/apikey</a> — about 30 seconds.</div>
+    <div class="field"><label>Groq API key <span style="color:var(--ink-3);font-weight:400">(fallback, optional)</span></label><input class="input" id="groqkeyinput" type="password" placeholder="gsk_…"></div>
+    <div style="font-size:12.5px;color:var(--ink-3);line-height:1.6;margin-bottom:16px">Used automatically if Gemini fails or isn't configured. Get a free key at <a href="https://console.groq.com/keys" target="_blank" style="color:var(--iris);font-weight:600">console.groq.com/keys</a>.</div>
+    <div style="display:flex;gap:9px;justify-content:flex-end"><button class="btn btn-light" onclick="closeModal('m-key')">Cancel</button><button class="btn btn-primary" onclick="saveKey()">Save keys</button></div>
   </div>
 </div></div>
 
@@ -841,12 +843,16 @@ try{
 /* ─── State ─── */
 const S = { user:null };
 const GV = {
-  key:null, model:'gemini-2.0-flash', sessionId:null, camUrl:null,
+  key:null, model:'gemini-2.0-flash',
+  groqKey:null, groqModel:'qwen/qwen3.6-27b', // Groq's vision-capable model as of mid-2026 — check console.groq.com/docs/vision if this starts 404ing, Groq's lineup changes often.
+  lastProvider:null, // 'gemini' | 'groq' — set after each analyze(), shown in the UI for transparency
+  sessionId:null, camUrl:null,
   profile:null, questions:[], activeQ:0, marks:{}, aiResult:null, files:[],
   latestFrame:null, processedFrame:null, opencv:true, phoneConnected:false,
   frameRef:null, presenceRef:null, step:'setup', results:[], _booted:false
 };
 const GEMINI_URL = m => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'; // OpenAI-compatible endpoint
 
 /* ─── helpers ─── */
 const $ = id => document.getElementById(id);
@@ -940,6 +946,7 @@ function gvBoot(){
   const p=LS('profile'); if(p) GV.profile=p;
   const q=LS('questions'); if(q&&q.length) GV.questions=q;
   const k=LS('key'); if(k) GV.key=k;
+  const gk=LS('groq_key'); if(gk) GV.groqKey=gk;
   const cv=LS('opencv'); if(cv!==null) GV.opencv=!!cv;
   const sid=LS('session'); if(sid) GV.sessionId=sid;
   if(!GV.questions.length) GV.questions=[{label:'Q1',text:'',max:5},{label:'Q2',text:'',max:5}];
@@ -959,15 +966,31 @@ function gvGo(step){
   window.scrollTo(0,0);
 }
 
-/* ═══ API KEY ═══ */
+/* ═══ API KEY(S) ═══ */
 function checkKey(){
   const n=$('key-notice'), t=$('key-notice-txt'); if(!n) return;
-  if(GV.key){ n.className='notice info'; t.innerHTML='Gemini connected · AI grading is live. <button onclick="openKey()">Change key</button>'; }
-  else{ n.className='notice warn'; t.innerHTML='Grade Vision needs a Google Gemini key. It\'s free. <button onclick="openKey()">Add your API key →</button>'; }
+  if(GV.key && GV.groqKey){ n.className='notice info'; t.innerHTML='Gemini connected, Groq as fallback · AI grading is live. <button onclick="openKey()">Change keys</button>'; }
+  else if(GV.key){ n.className='notice info'; t.innerHTML='Gemini connected · AI grading is live. <button onclick="openKey()">Add a Groq fallback →</button>'; }
+  else if(GV.groqKey){ n.className='notice info'; t.innerHTML='Groq connected · AI grading is live. <button onclick="openKey()">Add Gemini too</button>'; }
+  else{ n.className='notice warn'; t.innerHTML='Grade Vision needs an AI key. Gemini is free. <button onclick="openKey()">Add your API key →</button>'; }
 }
-function openKey(){ $('keyinput').value=GV.key||''; openModal('m-key'); }
-function saveKey(){ const v=$('keyinput').value.trim(); if(!v){ toast('Enter a key','warn'); return; } GV.key=v; LS('key',v); closeModal('m-key'); checkKey(); netPing(); toast('Gemini key saved','ok'); }
-function netPing(){ const d=$('net-dot'),t=$('net-txt'); if(!d) return; if(!GV.key){ d.className='pdot wait'; t.textContent='No API key'; } else { d.className='pdot ok'; t.textContent='Gemini ready'; } }
+function openKey(){ $('keyinput').value=GV.key||''; $('groqkeyinput').value=GV.groqKey||''; openModal('m-key'); }
+function saveKey(){
+  const v=$('keyinput').value.trim();
+  const gv=$('groqkeyinput').value.trim();
+  if(!v && !gv){ toast('Enter at least one key','warn'); return; }
+  GV.key=v||null; LS('key',GV.key);
+  GV.groqKey=gv||null; LS('groq_key',GV.groqKey);
+  closeModal('m-key'); checkKey(); netPing();
+  toast(v&&gv?'Gemini + Groq keys saved':(v?'Gemini key saved':'Groq key saved'),'ok');
+}
+function netPing(){
+  const d=$('net-dot'),t=$('net-txt'); if(!d) return;
+  if(GV.key && GV.groqKey){ d.className='pdot ok'; t.textContent='Gemini ready · Groq fallback'; }
+  else if(GV.key){ d.className='pdot ok'; t.textContent='Gemini ready'; }
+  else if(GV.groqKey){ d.className='pdot ok'; t.textContent='Groq ready'; }
+  else{ d.className='pdot wait'; t.textContent='No API key'; }
+}
 
 /* ═══ SETUP ═══ */
 function renderQ(){
@@ -1109,15 +1132,16 @@ function uploadFrame(input){ const f=input.files&&input.files[0]; if(!f) return;
 function showAnalyzing(on,txt){ const o=$('analyzing'); if(o) o.classList.toggle('show',on); if(txt)$('analyzing-txt').textContent=txt; $('cam').classList.toggle('scanning',on); }
 
 async function analyze(){
-  if(!GV.key){ toast('Add your Gemini API key first','warn'); openKey(); return; }
+  if(!GV.key && !GV.groqKey){ toast('Add a Gemini or Groq API key first','warn'); openKey(); return; }
   if(!GV.latestFrame){ toast('No script yet — connect the camera or upload a photo','warn'); return; }
   const q=GV.questions[GV.activeQ]||{text:'',max:5,label:'Q1'};
   showAnalyzing(true, GV.opencv?'Cleaning image with OpenCV…':'Reading the script…');
   try{
     const pre=await preprocessSafe(GV.latestFrame);
     GV.processedFrame=pre.url; showProcessed(pre.url,pre.cleaned,pre.warped);
-    showAnalyzing(true,'Reading the script with Gemini…');
-    const result=await callGemini(pre.url,q); GV.aiResult=result; renderAI(result);
+    showAnalyzing(true,'Reading the script…');
+    const result=await callAI(pre.url,q); GV.aiResult=result; renderAI(result);
+    if(GV.lastProvider==='groq') toast('Graded with Groq','ok',2200);
   }catch(e){ console.error(e); toast('AI grading failed: '+(e.message||'error'),'err',4200); }
   finally{ showAnalyzing(false); }
 }
@@ -1134,10 +1158,49 @@ async function callGemini(dataUrl,q){
   const data=await res.json();
   const text=(((data.candidates||[])[0]||{}).content||{}).parts?.map(p=>p.text||'').join('')||'';
   let parsed; try{ parsed=JSON.parse(text.replace(/^```json?|```$/g,'').trim()); }catch(e){ throw new Error('Could not parse AI response'); }
+  return normalizeAIResult(parsed,q);
+}
+// Groq — OpenAI-compatible chat completions, used as an automatic fallback when
+// Gemini is unavailable (missing key, quota, or a request error). Model is a
+// vision-capable Groq model; see the note on GV.groqModel if it starts 404ing.
+async function callGroq(dataUrl,q){
+  const body={
+    model: GV.groqModel,
+    messages:[{ role:'user', content:[
+      { type:'text', text: buildPrompt(q) },
+      { type:'image_url', image_url:{ url: dataUrl } }
+    ]}],
+    temperature:0.2, max_completion_tokens:1024,
+    response_format:{ type:'json_object' }
+  };
+  const res=await fetch(GROQ_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+GV.groqKey},body:JSON.stringify(body)});
+  if(!res.ok){ let msg='HTTP '+res.status; try{ const e=await res.json(); if(e.error&&e.error.message) msg=e.error.message; }catch(_){} throw new Error(msg); }
+  const data=await res.json();
+  const text=(((data.choices||[])[0]||{}).message||{}).content||'';
+  let parsed; try{ parsed=JSON.parse(text.replace(/^```json?|```$/g,'').trim()); }catch(e){ throw new Error('Could not parse AI response'); }
+  return normalizeAIResult(parsed,q);
+}
+function normalizeAIResult(parsed,q){
   parsed.suggested_mark=Math.min(Math.max(parseFloat(parsed.suggested_mark)||0,0),q.max); parsed.max_mark=q.max;
   parsed.confidence=Math.min(Math.max(parseInt(parsed.confidence)||0,0),100);
   parsed.reasons=parsed.reasons||[]; parsed.errors=parsed.errors||[]; parsed.missing_concepts=parsed.missing_concepts||[];
   return parsed;
+}
+// Tries Gemini first (if configured), automatically falls back to Groq (if
+// configured) on any Gemini failure — missing key, quota, network, bad parse.
+async function callAI(dataUrl,q){
+  if(GV.key){
+    try{
+      const r=await callGemini(dataUrl,q); GV.lastProvider='gemini'; return r;
+    }catch(e){
+      if(!GV.groqKey) throw e;
+      console.warn('Gemini failed, falling back to Groq:',e.message);
+      toast('Gemini unavailable — trying Groq…','warn',2500);
+      const r=await callGroq(dataUrl,q); GV.lastProvider='groq'; return r;
+    }
+  }
+  if(GV.groqKey){ const r=await callGroq(dataUrl,q); GV.lastProvider='groq'; return r; }
+  throw new Error('No AI provider configured');
 }
 function renderAI(r){
   const tb=$('transcript'); tb.textContent=r.transcript||'—'; tb.classList.toggle('has',!!r.transcript);
