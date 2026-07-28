@@ -6,7 +6,7 @@
 
 AI-assisted handwriting grading for teachers — point your phone at a script, let AI read and suggest a mark in your own grading style. You stay in control.
 
-Built for **Intra-IUB Hackathon · Programming Week Summer 2026** by **Kuba Samsu Hackathon Team **
+Built for **Intra-IUB Hackathon · Programming Week Summer 2026** by **Koba Samsu Hackathon Team **
 
 [Live Demo](#) · [Report Bug](../../issues) · [Request Feature](../../issues)
 
